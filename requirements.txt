@@ -1,3 +1,5 @@
 python-dotenv
 redis
 sqlitecloud
+aioredis
+asyncio

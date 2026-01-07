@@ -1,5 +1,7 @@
 import hashlib
-from  settings import get_redis_client, sqlite_client
+import json
+from settings import get_redis_client, sqlite_client
+
 class GlobalCache:
     def __init__(self):
         self.r = get_redis_client()
@@ -33,17 +35,19 @@ class Coordinator:
         val = self.cache.get(node_key)
         
         if val:
-            return f"[CACHE HIT] {val}"
+            return f"[CACHE HIT] {json.loads(val)}"
         else:
             # 3. DB Fallback (Real SQLite Call)
             print("   [MISS] Reading from Real DB...")
-            row = sqlite_client.execute("SELECT username FROM users WHERE id = ?", (key,)).fetchone()
+            # Fetch Full Record
+            row = sqlite_client.execute("SELECT * FROM users WHERE id = ?", (key,)).fetchone()
             
             if row:
-                name = row[0]
-                # 4. Populate Cache (Write-Through logic on Read)
-                self.cache.set(node_key, name)
-                return f"[DB READ] {name}"
+                # Row is tuple (id, username)
+                record = {"id": row[0], "username": row[1]}
+                # 4. Populate Cache (Full Record)
+                self.cache.set(node_key, json.dumps(record))
+                return f"[DB READ] {record}"
             return None
 
     def update(self, key, value):
@@ -57,24 +61,28 @@ class Coordinator:
         # 2. UPDATE CACHE
         # We must calculate the route again to find the correct node
         node_key = self._get_node_key(key)
+        
+        # Form Full Record
+        record = {"id": key, "username": value}
         print(f"   2. Updating Cache Node ({node_key})...")
-        self.cache.set(node_key, value)
+        self.cache.set(node_key, json.dumps(record))
       
     def flush(self):
         self.cache.flushall()
 
-global_cache = GlobalCache()
-coord = Coordinator(global_cache)
+if __name__ == "__main__":
+    global_cache = GlobalCache()
+    coord = Coordinator(global_cache)
 
-# Scenario:
-# User 1 (Alice) is hashed to Node B (for example)
-# User 2 (Bob) is hashed to Node A
+    # Scenario:
+    # User 1 (Alice) is hashed to Node B (for example)
+    # User 2 (Bob) is hashed to Node A
 
-print(coord.show(1)) # First Read (Miss -> DB -> Cache)
-print(coord.show(1)) # Second Read (Hit)
+    print(coord.show(1)) # First Read (Miss -> DB -> Cache)
+    print(coord.show(1)) # Second Read (Hit)
 
-# THE REAL UPDATE
-coord.update(1, "Alice_Updated")
+    # THE REAL UPDATE
+    coord.update(1, "Alice_Updated")
 
-# Verify Consistency
-print(coord.show(1)) # Should return "Alice_Updated" from Cache
+    # Verify Consistency
+    print(coord.show(1)) # Should return "Alice_Updated" from Cache
